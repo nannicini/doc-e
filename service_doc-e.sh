@@ -1,7 +1,8 @@
 #!/bin/bash
 
-PIDFILE=/var/run/<NAME>.pid
-LOGFILE=/var/log/<NAME>.log
+PIDFILE=/var/run/doc-e.pid
+LOGFILE=/var/log/doc-e.log
+SCRIPT=
 
 start() {
   if [ -f /var/run/$PIDNAME ] && kill -0 $(cat /var/run/$PIDNAME); then
