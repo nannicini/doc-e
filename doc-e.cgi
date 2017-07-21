@@ -6,10 +6,12 @@ use POSIX;
 use File::Pid;
 use Config::Simple;
 use Try::Tiny;
+use File::List;
+use PDF::Extract;
 
-# make "mydaemon.log" file in /var/log/ with "chown root:adm mydaemon"
-# TODO: change "mydaemon" to the exact name of your daemon.
+
 my $daemonName    = "doc-e";
+my $appdir        = "/home/uinfo/doc-e";
 my $dieNow        = 0;                                     # used for "infinte loop" construct - allows daemon mode to gracefully exit
 my $dieNowChild   = 0;
 my $sleepMainLoop = 120;                                    # number of seconds to wait between "do something" execution after queue is clear
@@ -18,6 +20,10 @@ my $logFilePath   = "/var/log/";                           # log file path
 my $logFile       = $logFilePath . $daemonName . ".log";
 my $pidFilePath   = "/var/run/";                           # PID file path
 my $pidFile       = $pidFilePath . $daemonName . ".pid";
+
+my $cfg_privacy="";
+my $cfg_consenso="";
+my $cfg_fidelity="";
 
 # ABILITAZIONE LOG SU FILE
 
@@ -29,14 +35,23 @@ if ($logging) {
 print LOG "DOC-E Parent PROCESS STARTED\n";
 my $cfg = new Config::Simple(filename=>"config.ini");
 try{
-    my $cfg_privacy = $cfg->param(-block=>"privacy");
-    my $cfg_consenso = $cfg->param(-block=>"consenso");
-    my $cfg_fidelity = $cfg->param(-block=>"fidelity");
-    my $cfg_delega = $cfg->param(-block=>"delega");
+    $cfg_privacy = $cfg->param(-block=>"privacy");
+    $cfg_consenso = $cfg->param(-block=>"consenso");
+    $cfg_fidelity = $cfg->param(-block=>"fidelity");
+    #my $cfg_delega = $cfg->param(-block=>"delega");
     #print LOG $cfg_privacy->{watchdog_dirpath};
 }catch{
     print LOG "Error CFG Config::Simple $_";
 };
+
+my $dir_privacy = $cfg_privacy->{watchdog_dirpath};
+my $dir_consenso = $cfg_consenso->{watchdog_consenso};
+my $dir_fidelity = $cfg_fidelity->{watchdog_fidelity};
+
+my @dir_watchdog;
+$dir_watchdog[0]=$cfg_privacy->{watchdog_dirpath};
+$dir_watchdog[1]=$cfg_consenso->{watchdog_dirpath};
+$dir_watchdog[2]=$cfg_fidelity->{watchdog_dirpath};
 
 # daemonize
 use POSIX qw(setsid);
@@ -83,13 +98,44 @@ for (1 .. $n) {
     #CHILD PROCESS    
     logEntry("In the child process PID ($$)"); 
     sleep 2;
-    #run hook
-    my $cmd="hook1.pl";
     logEntry("Run Hook number PID ($$)");
     while(){
-            sleep 60;
-            logEntry("While true Hook number PID ($$)");
-            
+            sleep 20;
+            logEntry("PID ($$) $forks While true WatchDog number ");
+            my $dir = $dir_watchdog[$forks];
+            $dir=$appdir.$dir;
+            logEntry("PID ($$) $forks Directory: $dir");
+            my $search = new File::List($dir);
+            $search->show_empty_dirs();                 
+            my @files  = @{ $search->find("\.pdf\$") };
+            foreach my $file (@files) {
+                  logEntry ("PID ($$) $forks File: ".$file);
+                  my $npage=&pdf_getpagenumber($file);
+                  # Check PDF file PAGES
+                  if ($npage eq 1){
+                      logEntry ("PID ($$) $forks File 1 page ok: ".$file);
+                      
+                  }else{
+                      # Explode PDF File into single page file
+                      logEntry ("PID ($$) $forks File pages $npage: ".$file);
+                      logEntry ("PID ($$) $forks Explode PDF File ->".$file);
+                      my $pdf=new PDF::Extract( PDFDoc=>$file, PDFCache=>$dir);
+                      my $i=1;
+                      while ( $pdf->savePDFExtract( PDFPages=>$i )){
+                        $i++; 
+                      };
+                      my $error=$pdf->getVars("PDFError");
+                      logEntry ("PID ($$) $forks Explode PDF File <- END ".$error."-".$file);
+                      
+                      if (!$error){
+                        logEntry ("PID ($$) $forks Explode PDF File NO ERROR".$file);
+                        # Delete the file
+                      
+                      }
+                      
+                      
+                  }
+            }
     }
     exit;
     }
@@ -131,12 +177,31 @@ sub signalHandler {
 }
 
 sub signalHandlerChild {
-	logEntry("Handler Signal STOP CHILD ");
+	logEntry("Handler Signal CHILD ");
   $dieNowChild = 1;
 }
+
  
 # do this stuff when exit() is called.
 END {
 	if ($logging) { close LOG }
 	$pidfile->remove if defined $pidfile;
 }
+
+
+sub pdf_getpagenumber 
+{
+my $ind;
+my $i;
+my $result = `pdfinfo $_[0] `;
+logEntry "Lancio PDF Info";
+for($i=0;$i<length($result);$i++){
+  if (substr($result,$i,6) eq "Pages:"){
+  $ind=$i;
+  }
+}
+my @values = split("\n",substr($result,$ind+6));
+$values[0] =~ s/ //g;
+return($values[0]);
+}
+
