@@ -8,6 +8,7 @@ use Config::Simple;
 use Try::Tiny;
 use File::List;
 use PDF::Extract;
+use IO::File;
 
 
 my $daemonName    = "doc-e";
@@ -35,6 +36,7 @@ if ($logging) {
 print LOG "DOC-E Parent PROCESS STARTED\n";
 my $cfg = new Config::Simple(filename=>"config.ini");
 try{
+    
     $cfg_privacy = $cfg->param(-block=>"privacy");
     $cfg_consenso = $cfg->param(-block=>"consenso");
     $cfg_fidelity = $cfg->param(-block=>"fidelity");
@@ -44,14 +46,31 @@ try{
     print LOG "Error CFG Config::Simple $_";
 };
 
-my $dir_privacy = $cfg_privacy->{watchdog_dirpath};
-my $dir_consenso = $cfg_consenso->{watchdog_consenso};
-my $dir_fidelity = $cfg_fidelity->{watchdog_fidelity};
-
+#Read from ini file the configuration parameters
 my @dir_watchdog;
 $dir_watchdog[0]=$cfg_privacy->{watchdog_dirpath};
 $dir_watchdog[1]=$cfg_consenso->{watchdog_dirpath};
 $dir_watchdog[2]=$cfg_fidelity->{watchdog_dirpath};
+
+my @keydoc;
+$keydoc[0]=$cfg_privacy->{keydoc};
+$keydoc[1]=$cfg_consenso->{keydoc};
+$keydoc[2]=$cfg_fidelity->{keydoc};
+
+my @namedoc;
+$namedoc[0]=$cfg_privacy->{name};
+$namedoc[1]=$cfg_consenso->{name};
+$namedoc[2]=$cfg_fidelity->{name};
+
+my @croparea_doc;
+$croparea_doc[0]=$cfg_privacy{croparea_barcode};
+$croparea_doc[1]=$cfg_consenso{croparea_barcode};
+$croparea_doc[2]=$cfg_fidelity{croparea_barcode};
+
+my @density_doc;
+$density_doc[0]=$cfg_privacy{resolution};
+$density_doc[1]=$cfg_consenso{resolution};
+$density_doc[2]=$cfg_fidelity{resolution};
 
 # daemonize
 use POSIX qw(setsid);
@@ -114,7 +133,10 @@ for (1 .. $n) {
                   # Check PDF file PAGES
                   if ($npage eq 1){
                       logEntry ("PID ($$) $forks File 1 page ok: ".$file);
-                      
+                      logEntry ("- - - - Start the one page Script OCR - - - -");
+                      logEntry ("OCR Param:".$forks."-".$keydoc[$forks]."-".$namedoc[$forks]."-".$croparea_doc[$forks]."-".$density_doc[$forks]."-".$file);
+                      $code=&zbar_getbarcode($croparea_doc[$forks],$density_doc[$forks],$file,$$);
+                      logEntry ("Read barcode: $code");
                   }else{
                       # Explode PDF File into single page file
                       logEntry ("PID ($$) $forks File pages $npage: ".$file);
@@ -126,14 +148,12 @@ for (1 .. $n) {
                       };
                       my $error=$pdf->getVars("PDFError");
                       logEntry ("PID ($$) $forks Explode PDF File <- END ".$error."-".$file);
-                      
-                      if (!$error){
-                        logEntry ("PID ($$) $forks Explode PDF File NO ERROR".$file);
-                        # Delete the file
-                      
-                      }
-                      
-                      
+                      logEntry ("Try to Delete File $file");
+                      my $com="rm $file";
+                      system($com);
+                        if ($? == -1) {
+                                logEntry ("failed to execute: $!");
+                        }
                   }
             }
     }
@@ -203,5 +223,37 @@ for($i=0;$i<length($result);$i++){
 my @values = split("\n",substr($result,$ind+6));
 $values[0] =~ s/ //g;
 return($values[0]);
+}
+
+sub zbar_getbarcode()
+{
+# crop area first parameter
+# second parameter density
+# third inputfile to analize
+my $croparea=$_[0];
+my $density=$_[1];
+my $inputfile=$_[2];
+my $pidprocess=$_[3];
+
+# create e temporary file jpg 
+my $fh = IO::File->new("/tmp/$pidprocess.tmp", "w");
+if (defined $fh) {
+    $com="convert -density $density -crop $croparea -colorspace Gray $inputfile $fh";
+    system($com);
+    $res=`zbarimg --raw -q $fh`;    
+    $fh->close;
+}
+# analize the result
+$inizio=0;
+$fine=index($res,"\n");
+$codice=substr($res,0,($fine-$inizio));
+#if ($codice =~ /^\d*$/ ){
+#print "zbarimg code:$codice -$inizio-$fine\n";
+if ($codice eq ''){
+$res=`rm $fh`;
+return 0;
+}
+$res=`rm $fh`;
+return $codice;
 }
 
